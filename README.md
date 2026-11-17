@@ -174,6 +174,19 @@ CLIP sob demanda e reutilização, além de importação/OpenAPI sem bibliotecas
 São testes de comportamento com stubs, não uma validação de qualidade dos modelos
 nem uma chamada real aos provedores.
 
+## Avaliação real do CLIP
+
+O protocolo para avaliar fotografias reais com CLIP, sem Gemini nem downloads,
+está em [docs/avaliacao.md](docs/avaliacao.md). Com pesos já no cache local e um
+manifesto real preparado pela equipe:
+
+```bash
+python -m scripts.avaliar_clip data/avaliacao/entrada.csv --saida data/avaliacao/resultados.csv
+```
+
+O comando produz CSV por fotografia e resumo JSON; nenhum resultado real foi
+gerado nesta etapa.
+
 ## Referências oficiais
 
 - [CLIP no Transformers](https://huggingface.co/docs/transformers/model_doc/clip)
