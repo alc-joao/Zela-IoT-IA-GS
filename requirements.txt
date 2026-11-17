@@ -5,3 +5,6 @@ Pillow
 pydantic>=2,<3
 pytest
 httpx
+torch>=2.6,<3
+transformers>=4.45,<5
+google-genai>=1.55

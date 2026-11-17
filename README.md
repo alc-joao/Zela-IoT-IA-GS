@@ -1,149 +1,182 @@
 # Zela — Zeladoria Colaborativa com IA
 
-Projeto para a Global Solution 2026/2 da FIAP. O Zela pretende apoiar a identificação
-e a priorização de problemas urbanos a partir de fotografias enviadas pela comunidade,
-com justificativas e indicação de revisão humana.
+Projeto IoT/IA para a Global Solution 2026/2 da FIAP. Este microsserviço apoia a
+identificação de problemas urbanos em fotografias e sugere prioridades sujeitas
+à revisão humana. Ele usa visão computacional real e geração multimodal,
+sem resultados simulados em produção.
 
-Esta etapa prepara um microsserviço Python com FastAPI. A integração de IA ainda
-não foi implementada: fotografias válidas recebem **HTTP 503**, sem classificações
-simuladas. Nenhum provedor ou modelo foi escolhido.
+## Arquitetura
 
-## Arquitetura prevista
+Cliente → FastAPI → validação → CLIP zero-shot → Gemini multimodal → validação
+Pydantic → regras de abstenção → JSON.
 
-Fluxo atual: cliente → API FastAPI → validação da fotografia → resposta 503.
-O próximo passo será conectar a validação a um serviço de análise real, responsável
-por produzir uma resposta estruturada e sinalizar quando houver necessidade de
-revisão humana. A API não persiste as fotografias; o processamento multipart pode
-usar arquivos temporários, gerenciados e fechados pelo framework.
+- `app/main.py`: aplicação, `/health`, `/analisar` e documentação OpenAPI.
+- `app/config.py`: nome do serviço e limite de upload.
+- `app/schemas/analise.py`: categorias, escores visuais e contratos JSON.
+- `app/services/imagens.py`: MIME, bytes, dimensões e integridade.
+- `app/services/visao.py`: CLIP, carga sob demanda e reutilização por processo.
+- `app/services/generativa.py`: SDK oficial google-genai, prompt e validação.
+- `app/services/analise.py`: normalização da foto e coordenação das etapas.
+- `app/services/erros.py`: erros públicos sem detalhes internos.
+- `tests/test_api.py`: validações HTTP originais.
+- `tests/test_ia.py` e `tests/conftest.py`: integração e falhas com stubs isolados.
+- `data/examples/` e `docs/`: diretórios existentes, preservados.
 
-```text
-app/
-├── __init__.py
-├── config.py             # Nome do serviço e limite de upload
-├── main.py               # Aplicação e rotas HTTP
-├── schemas/
-│   ├── __init__.py
-│   └── analise.py        # Contrato da futura resposta de IA
-└── services/
-    ├── __init__.py
-    └── imagens.py        # MIME, bytes, formato real e integridade
-data/
-└── examples/             # Diretório existente, reservado para exemplos
-docs/                     # Diretório existente, reservado para documentação
-tests/
-└── test_api.py
-.env.example
-.gitignore
-requirements.txt
-README.md
-```
+A API não armazena fotografias permanentemente. O framework pode usar arquivos
+multipart temporários. Após validação, a foto tem orientação EXIF aplicada,
+é convertida em RGB, reduzida a no máximo 1600 × 1600 mantendo a proporção e
+reencodificada sem metadados. CLIP e Gemini recebem esses mesmos pixels.
+**A imagem normalizada é enviada ao Google Gemini**, junto dos escores CLIP.
 
-## Requisitos
+## Modelos e interpretação
 
-- Python 3.10 ou superior e `pip`.
-- FastAPI, Uvicorn, python-multipart, Pillow e Pydantic.
-- pytest e httpx para testes.
+O modelo `openai/clip-vit-base-patch32` é utilizado via Transformers e PyTorch em
+CPU. Ele compara a imagem com estas descrições em inglês:
 
-Não há dependências de IA nem modelos para baixar nesta etapa.
+| Categoria retornada | Descrição candidata |
+| --- | --- |
+| `buraco_no_asfalto` | a photo of a pothole in an asphalt road |
+| `entulho_ou_lixo` | a photo of garbage or construction debris dumped on a street |
+| `calcada_danificada` | a photo of a broken or damaged sidewalk |
+| `iluminacao_visivelmente_danificada` | a photo of a visibly broken street light fixture or damaged light pole |
+| `sem_problema_evidente` | a photo of an urban street with no evident maintenance problem |
 
-## Execução local
+O softmax dos logits produz **escores relativos às candidatas**, não probabilidades
+calibradas de um problema existir. Mudar as descrições muda os escores. CLIP sempre
+compara essas cinco opções; não é um detector validado de todos os problemas urbanos.
 
-Execute os comandos na raiz deste repositório, em um terminal Bash ou Zsh:
+Há abstenção conservadora se o maior escore for menor que 0,40 ou a diferença para
+o segundo for menor que 0,10. São heurísticas iniciais, sem calibração em dados
+locais. Também há abstenção se Gemini indicar incerteza ou discordar da categoria
+mais bem pontuada pelo CLIP. A resposta usa `categoria=inconclusiva`,
+`analise_inconclusiva=true`, `prioridade=null` e `revisao_humana=true`.
+Uma descrição neutra substitui conclusões conflitantes nesses casos.
+
+Gemini considera a imagem e os escores para gerar descrição objetiva, justificativa
+e sugestão de prioridade. Usa JSON estruturado com schema Pydantic, validado também
+localmente. O modelo padrão configurável é `gemini-3.8-flash`, documentado com entrada
+de imagem e saída estruturada. A disponibilidade depende da conta e do provedor.
+
+Todas as respostas exigem revisão humana nesta versão. A prioridade **não é decisão
+oficial**; é `baixa`, `media`, `alta` ou `null` quando inconclusiva ou sem problema
+evidente. Os nomes dos cinco campos originais foram preservados; `categoria` agora
+é enumerada e `prioridade` admite `null` para evitar atribuições sem fundamento.
+
+Uma fotografia não prova que uma luminária está apagada: a candidata de iluminação
+trata apenas de danos físicos visíveis. O prompt proíbe inventar localização,
+dimensões, risco confirmado ou pessoas envolvidas e manda ignorar instruções
+escritas na imagem. Pydantic valida estrutura e tipos; não comprova a veracidade
+das afirmações. Os modelos podem errar, inclusive em fotos fora do domínio ou com
+baixa qualidade; a abstenção não garante detectar todos esses casos. Não houve
+avaliação de acurácia com uma base de fotografias urbanas nesta etapa.
+
+## Requisitos e execução local
+
+Python 3.10 ou superior, pip e recursos de memória/disco compatíveis com PyTorch e
+CLIP. Não é necessária GPU. A instalação inclui bibliotecas grandes; execute-a
+quando desejar preparar o ambiente:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+cp .env.example .env
 ```
 
-A configuração é opcional. Sem variáveis de ambiente, cada fotografia tem limite
-de **5 MiB (5.242.880 bytes)**. Para personalizar o limite, copie e edite o exemplo:
+Edite `.env`: preencha `GEMINI_API_KEY` com sua chave do Google AI Studio e escolha
+um `GEMINI_MODEL` compatível com imagem e saída estruturada. Nunca versione a chave.
+O arquivo não é carregado automaticamente; em Bash/Zsh, exporte-o antes de iniciar:
 
 ```bash
-cp .env.example .env
-# Edite MAX_IMAGE_SIZE_MB em .env, se necessário.
 set -a
 source .env
 set +a
-```
-
-`MAX_IMAGE_SIZE_MB` deve ser um inteiro positivo. A aplicação lê o ambiente do
-processo na inicialização; o arquivo `.env` não é carregado automaticamente.
-O exemplo não contém segredos e não pressupõe um provedor de IA.
-
-Inicie a API:
-
-```bash
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-- API: http://127.0.0.1:8000
-- Swagger UI: http://127.0.0.1:8000/docs
-- ReDoc: http://127.0.0.1:8000/redoc
+| Variável | Configuração |
+| --- | --- |
+| `GEMINI_API_KEY` | Obrigatória para análise; sem valor no exemplo. |
+| `GEMINI_MODEL` | Padrão `gemini-3.8-flash`; deve estar disponível para sua conta. |
+| `MAX_IMAGE_SIZE_MB` | Inteiro positivo; padrão 5 MiB (5.242.880 bytes). |
+| `HF_HOME` | Opcional; diretório de cache gerenciado pelo Hugging Face. |
+
+CLIP só é carregado na primeira análise válida com chave configurada. Essa
+requisição poderá baixar pesos/configurações do Hugging Face se não estiverem em
+cache; poderá demorar e requerer internet. Importar a API, consultar `/health`,
+gerar OpenAPI e coletar/executar os testes não baixa pesos. Depois da carga, o
+modelo é reutilizado, com inferência serializada por processo. Cada worker teria
+sua própria cópia; comece com um processo. Falhas de carga retornam 503 e permitem
+nova tentativa numa próxima requisição. Não há fallback simulado.
+
+O Gemini tem timeout HTTP de 30 segundos e uma tentativa por análise. Esse timeout
+não limita a carga inicial do CLIP nem o tempo total da requisição. As chamadas
+externas estão sujeitas às cotas e condições da conta Google.
+
+Swagger: http://127.0.0.1:8000/docs · ReDoc: http://127.0.0.1:8000/redoc
 
 ## Endpoints
 
-### `GET /health`
-
-Retorna HTTP 200 e informa que a API está em execução. Esse endpoint não indica
-disponibilidade da futura integração de IA.
+`GET /health` retorna HTTP 200:
 
 ```json
 {"status": "ok", "servico": "zela-analise-urbana"}
 ```
 
-```bash
-curl http://127.0.0.1:8000/health
-```
+É uma checagem de execução da API, sem carregar modelos nem consultar o provedor.
 
-### `POST /analisar`
-
-Recebe `multipart/form-data` com o campo obrigatório **`fotografia`**. São aceitos
-JPEG (`image/jpeg`), PNG (`image/png`) e WebP (`image/webp`). O conteúdo precisa ser
-uma imagem íntegra, decodificável e compatível com o MIME declarado; a extensão do
-nome do arquivo não é usada como prova do formato.
-
-Além do limite em bytes, há um teto de **25 milhões de pixels** para limitar a
-memória usada na decodificação. A leitura de validação é limitada a um byte além
-do máximo permitido. Esse limite é aplicado após o processamento multipart; na
-implantação, o gateway também deverá limitar o tamanho do corpo da requisição.
+`POST /analisar` recebe multipart/form-data no campo obrigatório `fotografia`:
 
 ```bash
-curl -i -X POST http://127.0.0.1:8000/analisar \
-  -F 'fotografia=@/caminho/foto.jpg;type=image/jpeg'
+curl -i http://127.0.0.1:8000/analisar -F 'fotografia=@/caminho/foto.jpg;type=image/jpeg'
 ```
+
+Aceita JPEG, PNG e WebP com MIME compatível com o conteúdo real. Rejeita arquivos
+vazios, falsos, corrompidos, acima do limite em bytes ou de 25 milhões de pixels.
+O limite de bytes é aplicado depois do parsing multipart; em implantação, o gateway
+também precisa limitar o corpo da requisição. Para arquivos animados, somente o
+primeiro quadro é analisado.
 
 | HTTP | Situação |
 | --- | --- |
-| 400 | Arquivo vazio, conteúdo inválido ou imagem corrompida. |
-| 413 | Fotografia acima do limite de bytes ou de pixels. |
-| 415 | MIME não permitido ou incompatível com o formato real. |
-| 422 | Campo `fotografia` ausente ou requisição incompatível com o contrato. |
-| 503 | Fotografia válida, mas serviço de análise ainda não configurado. |
+| 200 | Análise estruturada, que pode ser inconclusiva. |
+| 400 | Conteúdo vazio, inválido ou corrompido. |
+| 413 | Limite de bytes ou pixels excedido. |
+| 415 | MIME não permitido ou divergente do formato real. |
+| 422 | Campo ausente ou requisição incompatível. |
+| 502 | Gemini retornou resposta incompleta, bloqueada ou inválida pelo schema. |
+| 503 | Chave/modelo não configurado, falha do CLIP ou provedor indisponível, inclusive cota/autenticação. |
+| 504 | Timeout do Gemini. |
 
-Resposta atual para uma imagem válida:
-
-```json
-{
-  "detail": "O serviço de análise ainda não está configurado. Nenhuma classificação foi gerada."
-}
-```
-
-O schema `RespostaAnalise` reserva o contrato futuro de sucesso com os campos
-obrigatórios `categoria`, `descricao`, `prioridade` (`baixa`, `media` ou `alta`),
-`justificativa` e `revisao_humana` (booleano). A documentação OpenAPI apresenta
-esse contrato, mas a API ainda não retorna resultados de análise com HTTP 200.
+Erros retornam `{"detail": "mensagem pública"}`, sem chave nem exceções internas.
+O contrato HTTP 200 está documentado em OpenAPI e contém `categoria`, `descricao`,
+`prioridade`, `justificativa`, `revisao_humana`, `analise_inconclusiva`,
+`visao_computacional` (modelo, cinco escores, indicação de abstenção e observação)
+e `aviso` sobre prioridade sugerida. Os escores são ordenados do maior ao menor.
 
 ## Testes
 
-Com o ambiente virtual ativado e as dependências instaladas:
-
 ```bash
+source .venv/bin/activate
 python -m pytest -q
 ```
 
-Os testes verificam a saúde da API, ausência de arquivo, MIME não permitido ou
-divergente, conteúdo vazio ou falso, imagem corrompida, limites de bytes e pixels,
-proteção contra descompressão excessiva e resposta 503 para imagens válidas em
-todos os formatos aceitos. As pequenas imagens usadas nos testes são geradas em
-memória, sem rede, credenciais ou resultados fictícios de IA.
+Os testes usam imagens pequenas em memória e substituem dependências externas por
+stubs: não precisam de chave, internet, Transformers, PyTorch nem SDK Google para
+rodar com as dependências HTTP/Pillow/Pydantic de teste já instaladas. As fixtures
+removem credenciais do ambiente e bloqueiam os pontos de chamada externa por padrão.
+Stubs nunca participam da execução de produção.
+
+Cobertura: validações HTTP, sucesso integrado, imagem/escores enviados ao Gemini,
+modelo configurável, ausência de chave, resposta malformada ou bloqueada,
+timeout/indisponibilidade sem vazamento, abstenção, prioridade não oficial, carga
+CLIP sob demanda e reutilização, além de importação/OpenAPI sem bibliotecas pesadas.
+São testes de comportamento com stubs, não uma validação de qualidade dos modelos
+nem uma chamada real aos provedores.
+
+## Referências oficiais
+
+- [CLIP no Transformers](https://huggingface.co/docs/transformers/model_doc/clip)
+- [Modelo CLIP utilizado](https://huggingface.co/openai/clip-vit-base-patch32)
+- [SDK oficial google-genai: multimodalidade, schema e configuração HTTP](https://googleapis.github.io/python-genai/)
+- [Gemini 3.8 Flash: modalidades e saída estruturada](https://aistudio.google.com/docs/models/gemini-3.8-flash)

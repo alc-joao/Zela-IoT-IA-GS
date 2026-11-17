@@ -17,7 +17,7 @@ FORMATOS_POR_MIME = {
 LIMITE_PIXELS = 25_000_000
 
 
-def validar_fotografia(fotografia: UploadFile) -> None:
+def validar_fotografia(fotografia: UploadFile) -> bytes:
     """Confere MIME, tamanho, formato real, integridade e decodificação."""
     formato_esperado = FORMATOS_POR_MIME.get(fotografia.content_type or "")
     if formato_esperado is None:
@@ -68,3 +68,4 @@ def validar_fotografia(fotografia: UploadFile) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="O arquivo não contém uma imagem válida ou está corrompido.",
         ) from erro
+    return conteudo
