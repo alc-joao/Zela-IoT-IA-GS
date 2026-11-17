@@ -2,8 +2,9 @@
 
 Projeto IoT/IA para a Global Solution 2026/2 da FIAP. Este microsserviço apoia a
 identificação de problemas urbanos em fotografias e sugere prioridades sujeitas
-à revisão humana. Ele usa visão computacional real e geração multimodal,
-sem resultados simulados em produção.
+à revisão humana. Combina visão computacional real com CLIP e organização textual
+com Qwen via Ollama local. Gemini foi preservado como alternativa multimodal;
+suas chamadas reais de API ainda não foram validadas com sucesso.
 
 ## Arquitetura
 
@@ -12,6 +13,25 @@ Pydantic → regras determinísticas de segurança → JSON. O padrão é Ollama
 Gemini é uma opção independente, sem fallback automático entre provedores.
 Quando CLIP abstém, a resposta inconclusiva é construída a partir dessa abstenção,
 sem chamar qualquer LLM ou solicitar prioridade.
+
+```mermaid
+flowchart TD
+    foto["Fotografia: POST /analisar"] --> validacao["Validação: MIME, bytes, integridade e dimensões"]
+    validacao --> normalizacao["Configuração do provedor e normalização da imagem"]
+    normalizacao --> clip["CLIP: classificação visual e escores relativos"]
+    clip --> abstencao{"CLIP inconclusivo?"}
+    abstencao -->|Sim: sem LLM| inconclusiva["Regra de segurança: inconclusiva, prioridade null"]
+    abstencao -->|Não| provedor{"IA_PROVIDER"}
+    provedor -->|"ollama: categoria e escores, sem foto"| qwen["Ollama / Qwen textual: saída estruturada"]
+    provedor -->|"gemini: foto normalizada e escores"| gemini["Gemini multimodal: alternativa sem validação real bem-sucedida"]
+    qwen --> pydantic["Pydantic: validação da saída estruturada"]
+    gemini --> pydantic
+    pydantic --> seguranca["Segurança: regras de categoria, texto e prioridade"]
+    seguranca --> decisao{"LLM inconclusivo ou categoria divergente do CLIP?"}
+    decisao -->|Sim| inconclusiva
+    decisao -->|Não| json["JSON final: revisão humana obrigatória"]
+    inconclusiva --> json
+```
 
 - `app/main.py`: aplicação, `/health`, `/analisar` e documentação OpenAPI.
 - `app/config.py`: nome do serviço e limite de upload.
@@ -25,7 +45,10 @@ sem chamar qualquer LLM ou solicitar prioridade.
 - `app/services/erros.py`: erros públicos sem detalhes internos.
 - `tests/test_api.py`: validações HTTP originais.
 - `tests/test_ia.py`, `tests/test_ollama.py` e `tests/conftest.py`: integração e falhas com stubs isolados.
-- `data/examples/` e `docs/`: diretórios existentes, preservados.
+- `scripts/avaliar_clip.py` e `tests/test_avaliar_clip.py`: avaliação por CSV e testes do avaliador.
+- [data/avaliacao/](data/avaliacao/): manifesto e relatórios da avaliação real; fotos mantidas apenas localmente.
+- [docs/avaliacao.md](docs/avaliacao.md): preparação das fotos, protocolo, resultados e limitações.
+- [docs/evidencias/analise-buraco.json](docs/evidencias/analise-buraco.json): corpo da resposta real da API.
 
 A API não armazena fotografias permanentemente. O framework pode usar arquivos
 multipart temporários. Após validação, a foto tem orientação EXIF aplicada,
@@ -70,6 +93,9 @@ strings não vazias e rejeição de campos extras. JSON inválido não vira suce
 
 Gemini mantém o SDK oficial, imagem e JSON estruturado. Seu modelo padrão
 configurável é `gemini-3.8-flash`. A disponibilidade depende da conta e do provedor.
+Essa integração foi preservada como alternativa multimodal, mas chamadas reais de
+sua API não foram validadas com sucesso; os testes com stubs não comprovam seu
+funcionamento externo.
 Ambos passam pela mesma política de saída segura descrita abaixo.
 
 Todas as respostas exigem revisão humana nesta versão. A prioridade **não é decisão
@@ -83,8 +109,9 @@ trata apenas de danos físicos visíveis. O prompt proíbe inventar localizaçã
 dimensões, risco confirmado ou pessoas envolvidas e manda ignorar instruções
 escritas na imagem. Pydantic valida estrutura e tipos; não comprova a veracidade
 das afirmações. Os modelos podem errar, inclusive em fotos fora do domínio ou com
-baixa qualidade; a abstenção não garante detectar todos esses casos. Não houve
-avaliação de acurácia com uma base de fotografias urbanas nesta etapa de integração.
+baixa qualidade; a abstenção não garante detectar todos esses casos. A avaliação
+exploratória com 3 fotografias reais teve 3 acertos, mas a amostra é pequena e
+**não comprova acurácia geral** nem representa todas as categorias e condições.
 
 ## Contenção de alucinações e prioridade
 
@@ -101,7 +128,10 @@ A justificativa também é construída por regras e nunca reproduz texto livre d
 LLM. Essa restrição vale para Ollama e Gemini. A IA generativa participa de uma
 resposta estruturada de confirmação/abstenção; as afirmações finais ficam limitadas
 às categorias sugeridas pelo CLIP. A frase genérica é uma regra transparente de
-segurança, não uma nova observação do Qwen nem um resultado simulado de visão.
+segurança. A descrição padronizada final deve ser atribuída a essa camada, e não
+apresentada como texto gerado pelo Qwen. A saída do Qwen pode copiar a frase
+permitida pelo prompt; a API usa a frase definida em código e pode descartar uma
+descrição livre diferente. Isso não acrescenta observações visuais ao CLIP.
 
 | Situação | Prioridade emitida | Regra |
 | --- | --- | --- |
@@ -224,6 +254,8 @@ source .venv/bin/activate
 python -m pytest -q
 ```
 
+Resultado verificado: **89 testes automatizados aprovados**.
+
 Os testes usam imagens pequenas em memória e substituem dependências externas por
 stubs: não precisam de chave, internet, Transformers, PyTorch nem SDK Google para
 rodar com as dependências HTTP/Pillow/Pydantic de teste já instaladas. As fixtures
@@ -245,22 +277,64 @@ O projeto usa CLIP para classificação visual zero-shot e um LLM selecionável 
 organização estruturada: Qwen 2.5 1.5B via Ollama local ou Gemini via Google.
 Qwen é textual neste fluxo e não inspeciona a foto. A implementação foi assistida
 por um agente de programação com IA e verificada por testes automatizados com
-dependências externas substituídas. Esses testes não comprovam acurácia em fotos
-reais nem o funcionamento do servidor Ollama da equipe. Nesta alteração não foram
-executadas inferências pesadas, downloads de pesos nem chamadas reais ao Gemini.
+dependências externas substituídas. Separadamente, foram realizadas a avaliação
+exploratória do CLIP com fotos reais e uma requisição real à API com Ollama local,
+descritas abaixo. Os testes com stubs verificam comportamento; as execuções reais
+registram funcionamento nos casos observados, sem comprovar acurácia geral.
+Gemini continua como alternativa multimodal sem chamadas reais validadas com sucesso.
 
-## Avaliação real do CLIP
+## Avaliação e execução reais
 
-O protocolo para avaliar fotografias reais com CLIP, sem Gemini nem downloads,
-está em [docs/avaliacao.md](docs/avaliacao.md). Com pesos já no cache local e um
-manifesto real preparado pela equipe:
+Em **17/11/2026**, foram registrados os seguintes resultados, separados dos testes
+automatizados com stubs:
+
+| Verificação real | Resultado e evidência |
+| --- | --- |
+| CLIP com 3 fotografias reais | 3 acertos: buraco no asfalto, entulho/lixo e calçada danificada; nenhuma abstenção ou arquivo inválido. [CSV](data/avaliacao/resultados.csv) e [resumo JSON](data/avaliacao/resultados.resumo.json). |
+| `POST /analisar` com fotografia real de buraco | HTTP 200, `categoria=buraco_no_asfalto`, `prioridade=media` e revisão humana obrigatória. [Corpo JSON da resposta](docs/evidencias/analise-buraco.json). |
+| Ollama local `qwen2.5:1.5b` | Modelo confirmado carregado após a requisição real; o [registro da execução](docs/avaliacao.md#teste-ponta-a-ponta-com-ollama--17112026) relata ausência de modelo carregado antes dela. |
+| Gemini | Alternativa multimodal preservada; chamadas reais de sua API não foram validadas com sucesso. |
+
+Os 3 acertos correspondem a 100% **somente nessa amostra pequena e exploratória**.
+Isso não comprova acurácia geral. Há apenas um exemplo por categoria observada;
+as métricas por categoria ficam `null` por insuficiência de exemplos. Não foram
+avaliadas todas as classes nem condições adversas. A descrição no JSON da API é
+padronizada pela segurança, não uma demonstração de redação livre do Qwen.
+
+### Preparar fotos e repetir o protocolo
+
+O procedimento completo está em [docs/avaliacao.md](docs/avaliacao.md). O
+[manifesto original](data/avaliacao/entrada.csv) usa caminhos relativos à pasta
+`data/avaliacao/`. As fotos ficam em `data/avaliacao/fotos/`, **ignorada pelo Git
+por motivos de distribuição e privacidade**; elas não acompanham o repositório.
+Terceiros devem fornecer imagens próprias, com origem e autorização de uso
+documentadas, e rotulá-las antes de consultar as previsões.
+
+Prepare essas imagens e um novo manifesto `data/avaliacao/entrada-repeticao.csv`
+com as colunas `caminho,categoria`, conforme o protocolo. Com o ambiente preparado
+e os pesos CLIP já no cache local, execute:
 
 ```bash
-python -m scripts.avaliar_clip data/avaliacao/entrada.csv --saida data/avaliacao/resultados.csv
+source .venv/bin/activate
+python -m scripts.avaliar_clip data/avaliacao/entrada-repeticao.csv --saida data/avaliacao/resultados-repeticao.csv
 ```
 
-O comando produz CSV por fotografia e resumo JSON; nenhum resultado real foi
-gerado nesta etapa.
+O avaliador usa CLIP real, sem Ollama, Gemini ou downloads, e produz CSV por foto e
+resumo JSON. As saídas devem ser novas: o script não sobrescreve os relatórios já
+existentes. Uma repetição com outras fotos constitui uma nova amostra e pode ter
+resultados diferentes dos registrados.
+
+## Integrantes
+
+| Nome completo | RM |
+| --- | --- |
+| João Victor Alcântara | 562707 |
+| Phillipo Barbosa | 565399 |
+| Leonardo Aragaki | 562944 |
+| Eduardo Martins | 562259 |
+
+
+**Origem das imagens de avaliação:** as cinco fotografias foram baixadas da internet; as fontes e licenças não foram registradas. Os arquivos não são redistribuídos. Consulte [a avaliação](docs/avaliacao.md).
 
 ## Referências oficiais
 
