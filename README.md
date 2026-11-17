@@ -7,8 +7,11 @@ sem resultados simulados em produção.
 
 ## Arquitetura
 
-Cliente → FastAPI → validação → CLIP zero-shot → Gemini multimodal → validação
-Pydantic → regras de abstenção → JSON.
+Cliente → FastAPI → validação → CLIP zero-shot → provedor selecionado → validação
+Pydantic → regras determinísticas de segurança → JSON. O padrão é Ollama local;
+Gemini é uma opção independente, sem fallback automático entre provedores.
+Quando CLIP abstém, a resposta inconclusiva é construída a partir dessa abstenção,
+sem chamar qualquer LLM ou solicitar prioridade.
 
 - `app/main.py`: aplicação, `/health`, `/analisar` e documentação OpenAPI.
 - `app/config.py`: nome do serviço e limite de upload.
@@ -16,17 +19,24 @@ Pydantic → regras de abstenção → JSON.
 - `app/services/imagens.py`: MIME, bytes, dimensões e integridade.
 - `app/services/visao.py`: CLIP, carga sob demanda e reutilização por processo.
 - `app/services/generativa.py`: SDK oficial google-genai, prompt e validação.
+- `app/services/ollama.py`: HTTP local via httpx, JSON Schema e validação rigorosa.
+- `app/services/seguranca.py`: descrições permitidas, prioridades e abstenção.
 - `app/services/analise.py`: normalização da foto e coordenação das etapas.
 - `app/services/erros.py`: erros públicos sem detalhes internos.
 - `tests/test_api.py`: validações HTTP originais.
-- `tests/test_ia.py` e `tests/conftest.py`: integração e falhas com stubs isolados.
+- `tests/test_ia.py`, `tests/test_ollama.py` e `tests/conftest.py`: integração e falhas com stubs isolados.
 - `data/examples/` e `docs/`: diretórios existentes, preservados.
 
 A API não armazena fotografias permanentemente. O framework pode usar arquivos
 multipart temporários. Após validação, a foto tem orientação EXIF aplicada,
 é convertida em RGB, reduzida a no máximo 1600 × 1600 mantendo a proporção e
-reencodificada sem metadados. CLIP e Gemini recebem esses mesmos pixels.
-**A imagem normalizada é enviada ao Google Gemini**, junto dos escores CLIP.
+reencodificada sem metadados quando o provedor é Gemini.
+**O Qwen recebe exclusivamente a categoria CLIP, seus escores relativos e a
+indicação de abstenção, junto das instruções de formatação e segurança. Não recebe
+a fotografia, nome do arquivo, pixels, base64 ou localização.** Ele não consegue
+confirmar objetos nem acrescentar observações visuais. Se `IA_PROVIDER=gemini`,
+a imagem normalizada e os escores são enviados ao Google, preservando a integração
+multimodal existente. Somente CLIP vê a fotografia no fluxo local com Qwen textual.
 
 ## Modelos e interpretação
 
@@ -47,19 +57,25 @@ compara essas cinco opções; não é um detector validado de todos os problemas
 
 Há abstenção conservadora se o maior escore for menor que 0,40 ou a diferença para
 o segundo for menor que 0,10. São heurísticas iniciais, sem calibração em dados
-locais. Também há abstenção se Gemini indicar incerteza ou discordar da categoria
+locais. Também há abstenção se o provedor indicar incerteza ou discordar da categoria
 mais bem pontuada pelo CLIP. A resposta usa `categoria=inconclusiva`,
 `analise_inconclusiva=true`, `prioridade=null` e `revisao_humana=true`.
 Uma descrição neutra substitui conclusões conflitantes nesses casos.
 
-Gemini considera a imagem e os escores para gerar descrição objetiva, justificativa
-e sugestão de prioridade. Usa JSON estruturado com schema Pydantic, validado também
-localmente. O modelo padrão configurável é `gemini-3.8-flash`, documentado com entrada
-de imagem e saída estruturada. A disponibilidade depende da conta e do provedor.
+Ollama usa `POST /api/chat`, `stream=false`, `format` com o JSON Schema do
+`AnaliseGerada`, `options.temperature=0` e limite de geração de 512 tokens.
+O modelo padrão é `qwen2.5:1.5b`. A resposta deve terminar completamente e passar
+pela validação Pydantic rigorosa: campos obrigatórios, enums, booleanos reais,
+strings não vazias e rejeição de campos extras. JSON inválido não vira sucesso.
+
+Gemini mantém o SDK oficial, imagem e JSON estruturado. Seu modelo padrão
+configurável é `gemini-3.8-flash`. A disponibilidade depende da conta e do provedor.
+Ambos passam pela mesma política de saída segura descrita abaixo.
 
 Todas as respostas exigem revisão humana nesta versão. A prioridade **não é decisão
-oficial**; é `baixa`, `media`, `alta` ou `null` quando inconclusiva ou sem problema
-evidente. Os nomes dos cinco campos originais foram preservados; `categoria` agora
+oficial**. O contrato continua aceitando `baixa`, `media`, `alta` ou `null`, mas a
+política desta versão emite somente `media` para triagem de categorias de problema
+e `null` nos demais casos. Os nomes dos cinco campos originais foram preservados; `categoria` agora
 é enumerada e `prioridade` admite `null` para evitar atribuições sem fundamento.
 
 Uma fotografia não prova que uma luminária está apagada: a candidata de iluminação
@@ -68,7 +84,36 @@ dimensões, risco confirmado ou pessoas envolvidas e manda ignorar instruções
 escritas na imagem. Pydantic valida estrutura e tipos; não comprova a veracidade
 das afirmações. Os modelos podem errar, inclusive em fotos fora do domínio ou com
 baixa qualidade; a abstenção não garante detectar todos esses casos. Não houve
-avaliação de acurácia com uma base de fotografias urbanas nesta etapa.
+avaliação de acurácia com uma base de fotografias urbanas nesta etapa de integração.
+
+## Contenção de alucinações e prioridade
+
+Prompts, temperatura zero e JSON Schema não garantem veracidade. A API aplica uma
+**lista fechada de descrições condicionais**, mantida em `app/services/seguranca.py`.
+Por exemplo, para buraco: “Pode haver um buraco no asfalto; é necessária verificação
+humana.” Somente a frase exata permitida para a categoria CLIP é aceita; qualquer
+outra descrição é descartada e substituída pela frase genérica. Isso inclui textos
+plausíveis que acrescentem uma TV, pessoas, medidas, endereço, causas ou riscos.
+O descarte é indicado na justificativa, sem repetir o texto rejeitado. Não há uma
+blacklist de palavras que possa deixar passar sinônimos ou invenções diferentes.
+
+A justificativa também é construída por regras e nunca reproduz texto livre do
+LLM. Essa restrição vale para Ollama e Gemini. A IA generativa participa de uma
+resposta estruturada de confirmação/abstenção; as afirmações finais ficam limitadas
+às categorias sugeridas pelo CLIP. A frase genérica é uma regra transparente de
+segurança, não uma nova observação do Qwen nem um resultado simulado de visão.
+
+| Situação | Prioridade emitida | Regra |
+| --- | --- | --- |
+| Buraco, lixo/entulho, calçada ou iluminação fisicamente danificada, sem abstenção | `media` | Sugestão neutra de triagem pela categoria, sem inferir severidade. |
+| Sem problema evidente | `null` | Ausência de evidência não comprova ausência de problema. |
+| CLIP inconclusivo, LLM inconclusivo ou categorias divergentes | `null` | Retornar análise inconclusiva e revisão humana obrigatória. |
+
+Uma prioridade `alta` ou `baixa` enviada pelo LLM não altera a tabela. Uma prioridade
+fora do enum invalida a resposta (502). As regras não usam o escore como chance de
+acidente e não avaliam urgência real. Casos graves podem precisar de triagem humana
+imediata; a API não realiza despacho nem toma decisões oficiais. Erros do CLIP
+ainda podem resultar em uma categoria incorreta, mesmo com texto controlado.
 
 ## Requisitos e execução local
 
@@ -80,11 +125,23 @@ quando desejar preparar o ambiente:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-cp .env.example .env
+cp -n .env.example .env
 ```
 
-Edite `.env`: preencha `GEMINI_API_KEY` com sua chave do Google AI Studio e escolha
-um `GEMINI_MODEL` compatível com imagem e saída estruturada. Nunca versione a chave.
+As dependências Python permanecem as existentes: o serviço Ollama reutiliza httpx,
+sem SDK adicional. No ambiente já preparado, basta ativar `.venv`.
+
+Para o Ollama local já instalado, confirme que o servidor está em execução e que
+`qwen2.5:1.5b` está presente (`ollama list`). Se precisar iniciar o servidor, execute
+`ollama serve` em outro terminal. A aplicação não baixa nem instala modelos Ollama.
+Em um Mac com 8 GB, comece com um único processo Uvicorn: CLIP e Qwen compartilham
+os recursos locais e a primeira chamada pode incluir a carga dos modelos.
+
+Edite `.env` com `IA_PROVIDER=ollama` (padrão), `OLLAMA_MODEL=qwen2.5:1.5b`,
+`OLLAMA_BASE_URL=http://127.0.0.1:11434` e `OLLAMA_TIMEOUT_SECONDS=60`.
+Para selecionar Gemini, use `IA_PROVIDER=gemini` e preencha `GEMINI_API_KEY` com
+sua chave, além de um `GEMINI_MODEL` compatível. Ollama não exige essa chave.
+Nunca versione chaves: `.env` permanece ignorado pelo Git.
 O arquivo não é carregado automaticamente; em Bash/Zsh, exporte-o antes de iniciar:
 
 ```bash
@@ -96,12 +153,16 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 | Variável | Configuração |
 | --- | --- |
-| `GEMINI_API_KEY` | Obrigatória para análise; sem valor no exemplo. |
+| `IA_PROVIDER` | `ollama` (padrão) ou `gemini`; valor inválido retorna 503. |
+| `OLLAMA_MODEL` | Padrão `qwen2.5:1.5b`; deve existir no servidor local. |
+| `OLLAMA_BASE_URL` | Padrão `http://127.0.0.1:11434`; aceita apenas loopback (`127.0.0.1`, `localhost`, `::1`), sem credenciais, caminho ou query. |
+| `OLLAMA_TIMEOUT_SECONDS` | Número positivo finito; padrão 60 segundos para operações HTTP. |
+| `GEMINI_API_KEY` | Obrigatória somente para Gemini; sem valor no exemplo. |
 | `GEMINI_MODEL` | Padrão `gemini-3.8-flash`; deve estar disponível para sua conta. |
 | `MAX_IMAGE_SIZE_MB` | Inteiro positivo; padrão 5 MiB (5.242.880 bytes). |
 | `HF_HOME` | Opcional; diretório de cache gerenciado pelo Hugging Face. |
 
-CLIP só é carregado na primeira análise válida com chave configurada. Essa
+CLIP só é carregado na primeira análise válida com configuração do provedor válida. Essa
 requisição poderá baixar pesos/configurações do Hugging Face se não estiverem em
 cache; poderá demorar e requerer internet. Importar a API, consultar `/health`,
 gerar OpenAPI e coletar/executar os testes não baixa pesos. Depois da carga, o
@@ -109,9 +170,11 @@ modelo é reutilizado, com inferência serializada por processo. Cada worker ter
 sua própria cópia; comece com um processo. Falhas de carga retornam 503 e permitem
 nova tentativa numa próxima requisição. Não há fallback simulado.
 
-O Gemini tem timeout HTTP de 30 segundos e uma tentativa por análise. Esse timeout
-não limita a carga inicial do CLIP nem o tempo total da requisição. As chamadas
-externas estão sujeitas às cotas e condições da conta Google.
+Ollama usa o timeout configurado e uma tentativa, sem fallback para Gemini.
+O cliente local ignora proxies do ambiente e não segue redirecionamentos. Gemini
+mantém timeout HTTP de 30 segundos e uma tentativa. Esses tempos são limites de
+operações HTTP, não um prazo total que inclua a inferência CLIP. Chamadas Gemini
+estão sujeitas às cotas e condições da conta Google.
 
 Swagger: http://127.0.0.1:8000/docs · ReDoc: http://127.0.0.1:8000/redoc
 
@@ -144,9 +207,9 @@ primeiro quadro é analisado.
 | 413 | Limite de bytes ou pixels excedido. |
 | 415 | MIME não permitido ou divergente do formato real. |
 | 422 | Campo ausente ou requisição incompatível. |
-| 502 | Gemini retornou resposta incompleta, bloqueada ou inválida pelo schema. |
-| 503 | Chave/modelo não configurado, falha do CLIP ou provedor indisponível, inclusive cota/autenticação. |
-| 504 | Timeout do Gemini. |
+| 502 | Provedor retornou JSON/resposta incompleta ou inválida, ou Ollama rejeitou o schema. |
+| 503 | Configuração inválida, falha do CLIP, Ollama desconectado/modelo ausente ou provedor indisponível. |
+| 504 | Timeout do provedor selecionado. |
 
 Erros retornam `{"detail": "mensagem pública"}`, sem chave nem exceções internas.
 O contrato HTTP 200 está documentado em OpenAPI e contém `categoria`, `descricao`,
@@ -168,11 +231,23 @@ removem credenciais do ambiente e bloqueiam os pontos de chamada externa por pad
 Stubs nunca participam da execução de produção.
 
 Cobertura: validações HTTP, sucesso integrado, imagem/escores enviados ao Gemini,
-modelo configurável, ausência de chave, resposta malformada ou bloqueada,
-timeout/indisponibilidade sem vazamento, abstenção, prioridade não oficial, carga
+somente categoria/escores enviados ao Ollama, seleção de provedor, modelo/timeout
+configuráveis, ausência de chave Gemini, resposta malformada ou bloqueada,
+modelo Ollama ausente, timeout/indisponibilidade sem vazamento, descarte de objeto
+alucinado e justificativa livre, prioridade determinística, abstenção sem LLM, carga
 CLIP sob demanda e reutilização, além de importação/OpenAPI sem bibliotecas pesadas.
 São testes de comportamento com stubs, não uma validação de qualidade dos modelos
 nem uma chamada real aos provedores.
+
+## Declaração do uso de IA
+
+O projeto usa CLIP para classificação visual zero-shot e um LLM selecionável para
+organização estruturada: Qwen 2.5 1.5B via Ollama local ou Gemini via Google.
+Qwen é textual neste fluxo e não inspeciona a foto. A implementação foi assistida
+por um agente de programação com IA e verificada por testes automatizados com
+dependências externas substituídas. Esses testes não comprovam acurácia em fotos
+reais nem o funcionamento do servidor Ollama da equipe. Nesta alteração não foram
+executadas inferências pesadas, downloads de pesos nem chamadas reais ao Gemini.
 
 ## Avaliação real do CLIP
 
@@ -193,3 +268,5 @@ gerado nesta etapa.
 - [Modelo CLIP utilizado](https://huggingface.co/openai/clip-vit-base-patch32)
 - [SDK oficial google-genai: multimodalidade, schema e configuração HTTP](https://googleapis.github.io/python-genai/)
 - [Gemini 3.8 Flash: modalidades e saída estruturada](https://aistudio.google.com/docs/models/gemini-3.8-flash)
+- [Ollama: API de chat](https://docs.ollama.com/api/chat)
+- [Ollama: JSON Schema e saída estruturada](https://docs.ollama.com/capabilities/structured-outputs)

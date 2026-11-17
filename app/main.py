@@ -10,8 +10,8 @@ from app.services.erros import ErroAnalise
 
 app = FastAPI(
     title="Zela — Análise de Fotografias Urbanas",
-    version="0.2.0",
-    description="Análise assistida por CLIP e Gemini. Prioridades são sugestões sujeitas a revisão humana.",
+    version="0.3.0",
+    description="Análise assistida por CLIP e Ollama local ou Gemini. Prioridades são sugestões sujeitas a revisão humana.",
 )
 
 
@@ -24,7 +24,7 @@ def health() -> dict[str, str]:
     "/analisar",
     response_model=RespostaAnalise,
     summary="Recebe e valida uma fotografia de problema urbano",
-    description="Valida a fotografia, classifica com CLIP e estrutura a análise com Gemini.",
+    description="Valida a fotografia, classifica com CLIP e estrutura a análise com o provedor configurado.",
     responses={
         400: {"description": "Arquivo vazio, inválido ou corrompido."},
         413: {"description": "Limite de bytes ou de pixels excedido."},
