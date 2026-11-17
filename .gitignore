@@ -1,0 +1,51 @@
+# Configuração local e ambientes virtuais
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Python, testes e ferramentas
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+build/
+dist/
+*.egg-info/
+
+# Arquivos temporários
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Credenciais e chaves privadas
+.aws/
+.azure/
+.gcp/
+.kube/
+credentials
+credentials.*
+secrets/
+secrets.*
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*service-account*.json
