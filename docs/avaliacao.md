@@ -268,3 +268,17 @@ As fotografias estão armazenadas localmente e não são publicadas no repositó
 - data/avaliacao/resultados.resumo.json
 
 A avaliação utilizou o modelo CLIP real, sem Gemini.
+
+### Teste ponta a ponta com Ollama — 17/11/2026
+
+- Imagem real: buraco_na_rua-831589.jpg
+- Classificação CLIP: buraco_no_asfalto
+- Resposta da API: HTTP 200
+- Provedor: Ollama local, modelo qwen2.5:1.5b
+- Evidência: nenhum modelo carregado antes; Qwen carregado após a requisição
+- Saída estruturada validada, com revisão humana obrigatória
+- Descrição final padronizada pela camada de segurança
+- Arquivo: docs/evidencias/analise-buraco.json
+
+O teste confirma o acionamento local do modelo generativo,
+mas não comprova aproveitamento de redação livre do Qwen.
