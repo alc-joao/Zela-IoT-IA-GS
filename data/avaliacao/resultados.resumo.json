@@ -1,0 +1,69 @@
+{
+  "casos_validos": 3,
+  "acertos": 3,
+  "inconclusivas": 0,
+  "acuracia_simples": 1.0,
+  "percentual_inconclusivas": 0.0,
+  "total_linhas": 3,
+  "casos_invalidos": 0,
+  "minimo_por_categoria": 5,
+  "por_categoria": {
+    "buraco_no_asfalto": {
+      "casos_validos": 1,
+      "acertos": 1,
+      "inconclusivas": 0,
+      "acuracia_simples": null,
+      "percentual_inconclusivas": null,
+      "exemplos_suficientes": false
+    },
+    "entulho_ou_lixo": {
+      "casos_validos": 1,
+      "acertos": 1,
+      "inconclusivas": 0,
+      "acuracia_simples": null,
+      "percentual_inconclusivas": null,
+      "exemplos_suficientes": false
+    },
+    "calcada_danificada": {
+      "casos_validos": 1,
+      "acertos": 1,
+      "inconclusivas": 0,
+      "acuracia_simples": null,
+      "percentual_inconclusivas": null,
+      "exemplos_suficientes": false
+    },
+    "iluminacao_visivelmente_danificada": {
+      "casos_validos": 0,
+      "acertos": 0,
+      "inconclusivas": 0,
+      "acuracia_simples": null,
+      "percentual_inconclusivas": null,
+      "exemplos_suficientes": false
+    },
+    "sem_problema_evidente": {
+      "casos_validos": 0,
+      "acertos": 0,
+      "inconclusivas": 0,
+      "acuracia_simples": null,
+      "percentual_inconclusivas": null,
+      "exemplos_suficientes": false
+    },
+    "inconclusiva": {
+      "casos_validos": 0,
+      "acertos": 0,
+      "inconclusivas": 0,
+      "acuracia_simples": null,
+      "percentual_inconclusivas": null,
+      "exemplos_suficientes": false
+    }
+  },
+  "modelo": "openai/clip-vit-base-patch32",
+  "candidatas": {
+    "buraco_no_asfalto": "a photo of a pothole in an asphalt road",
+    "entulho_ou_lixo": "a photo of garbage or construction debris dumped on a street",
+    "calcada_danificada": "a photo of a broken or damaged sidewalk",
+    "iluminacao_visivelmente_danificada": "a photo of a visibly broken street light fixture or damaged light pole",
+    "sem_problema_evidente": "a photo of an urban street with no evident maintenance problem"
+  },
+  "observacao": "Escores relativos, não probabilidades calibradas. Nenhum Gemini utilizado."
+}

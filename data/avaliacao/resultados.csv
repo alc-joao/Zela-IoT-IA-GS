@@ -1,0 +1,4 @@
+linha,caminho,categoria_esperada,categoria_prevista,categoria_top1,maior_escore_relativo,abstencao,acerto,status,erro
+2,fotos/buraco_na_rua-831589.jpg,buraco_no_asfalto,buraco_no_asfalto,buraco_no_asfalto,0.9943550825119019,False,True,valido,
+3,fotos/lixo na rua.jpeg,entulho_ou_lixo,entulho_ou_lixo,entulho_ou_lixo,0.9965915679931641,False,True,valido,
+4,fotos/problema-calcada.jpeg,calcada_danificada,calcada_danificada,calcada_danificada,0.8045721650123596,False,True,valido,

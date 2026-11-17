@@ -230,3 +230,41 @@ São arquivos temporários pequenos, sem fotos reais. Somente a inferência CLIP
 substituída nos testes do script; leitura, validação, CSV e métricas executam de
 verdade. A infraestrutura existente bloqueia pontos de acesso externo por padrão.
 Não há argumento para ativar stubs na avaliação real.
+
+## Primeira avaliação real — 17/11/2026
+
+**Modelo:** openai/clip-vit-base-patch32
+
+**Metodologia:** classificação zero-shot com fotografias urbanas rotuladas previamente, comparando a primeira categoria prevista com a categoria esperada.
+
+### Resultados observados
+
+| Categoria esperada | Resultado |
+|---|---|
+| Buraco no asfalto | Acerto |
+| Entulho ou lixo | Acerto |
+| Calçada danificada | Acerto |
+
+- Casos válidos: 3
+- Acertos: 3
+- Acurácia simples da amostra: 100%
+- Análises inconclusivas: 0
+- Arquivos inválidos nesta execução: 0
+
+### Limitações
+
+A amostra é pequena e não representa a precisão geral do modelo. Não houve quantidade suficiente de exemplos para métricas por categoria.
+
+Não foram avaliados nesta execução casos de imagens corrompidas, fotos escuras, enchentes ou ausência de problemas evidentes.
+
+Os escores CLIP são relativos às descrições candidatas, não probabilidades calibradas. As previsões precisam de revisão humana.
+
+As fotografias estão armazenadas localmente e não são publicadas no repositório. Sua origem e autorização de uso devem ser documentadas para permitir uma avaliação reproduzível.
+
+### Evidências
+
+- data/avaliacao/entrada.csv
+- data/avaliacao/resultados.csv
+- data/avaliacao/resultados.resumo.json
+
+A avaliação utilizou o modelo CLIP real, sem Gemini.

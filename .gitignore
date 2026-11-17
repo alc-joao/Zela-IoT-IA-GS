@@ -49,3 +49,12 @@ secrets.*
 id_rsa*
 id_ed25519*
 *service-account*.json
+
+# Fotografias locais de avaliacao
+/data/avaliacao/fotos/
+
+# Fotografias locais de avaliacao
+/data/avaliacao/fotos/
+
+# Fotografias locais de avaliacao
+/data/avaliacao/fotos/
